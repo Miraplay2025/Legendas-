@@ -3,56 +3,62 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AutoCaption Pro - 20 Modelos de Legenda</title>
+    <title>AutoCaption Pro - Plataforma Profissional</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">
         <header>
             <h1>AutoCaption <span>Pro</span></h1>
-            <p>Sistema Profissional de Legendas Automáticas</p>
+            <p>Gerador Profissional de Legendas Automáticas</p>
         </header>
 
         <main>
-            <!-- 1. MÍDIA -->
+            <!-- 1. PRÉ-VISUALIZAÇÃO DE MÍDIA DE FUNDO -->
             <section class="card media-section">
                 <h2>1. Mídia de Fundo (Vídeo ou Imagem)</h2>
                 <div class="upload-box" id="mediaUploadBox">
                     <input type="file" id="mediaInput" accept="video/*,image/*" hidden>
-                    <button class="btn" onclick="document.getElementById('mediaInput').click()">Selecionar Vídeo/Imagem</button>
-                    <p class="file-hint">Mantém a proporção original do arquivo</p>
+                    <button class="btn" onclick="document.getElementById('mediaInput').click()">Carregar Vídeo / Imagem</button>
+                    <p class="file-hint">Proporção original garantida sem distorções</p>
                 </div>
                 <div class="preview-container hidden" id="mediaPreviewContainer">
                     <video id="videoPreview" controls class="hidden"></video>
-                    <img id="imagePreview" class="hidden" alt="Preview da Imagem">
+                    <img id="imagePreview" class="hidden" alt="Preview de Imagem">
                 </div>
             </section>
 
-            <!-- 2. ÁUDIO -->
+            <!-- 2. PLAYER DE ÁUDIO CORPORATIVO -->
             <section class="card audio-section">
                 <h2>2. Áudio de Origem</h2>
                 <div class="upload-box" id="audioUploadBox">
                     <input type="file" id="audioInput" accept="audio/*" hidden>
-                    <button class="btn secondary" onclick="document.getElementById('audioInput').click()">Selecionar Áudio</button>
+                    <button class="btn secondary" onclick="document.getElementById('audioInput').click()">Carregar Arquivo de Áudio</button>
                 </div>
-                <div class="audio-info-card hidden" id="audioInfoCard">
-                    <div class="audio-details">
-                        <span id="audioName">arquivo.mp3</span>
-                        <span id="audioMeta">00:00 | 0 MB</span>
+                
+                <div class="audio-pro-player hidden" id="audioProPlayer">
+                    <div class="player-top">
+                        <div class="audio-badge">Áudio Carregado</div>
+                        <div class="audio-metrics" id="audioMetrics">00:00 / 00:00 | 0.0 MB</div>
                     </div>
-                    <audio id="audioPlayer" controls></audio>
+                    <div class="waveform-mock">
+                        <div class="bar"></div><div class="bar active"></div><div class="bar"></div><div class="bar active"></div>
+                        <div class="bar"></div><div class="bar active"></div><div class="bar"></div><div class="bar"></div>
+                        <div class="bar active"></div><div class="bar"></div><div class="bar active"></div><div class="bar"></div>
+                    </div>
+                    <audio id="audioElement" controls></audio>
                 </div>
             </section>
 
-            <!-- 3. MODELOS DE LEGENDAS (20 OPÇÕES) -->
+            <!-- 3. MODELOS DE LEGENDAS -->
             <section class="card styles-section">
                 <h2>3. Selecione um dos 20 Modelos de Legenda</h2>
                 <div class="styles-grid" id="stylesGrid"></div>
 
                 <div class="options-group">
-                    <label for="wordsPerBatch">Palavras exibidas por vez:</label>
+                    <label for="wordsPerBatch">Palavras exibidas por lote:</label>
                     <select id="wordsPerBatch">
-                        <option value="2">2 Palavras (Ultra Rápido)</option>
+                        <option value="2">2 Palavras (Rápido)</option>
                         <option value="4">4 Palavras (Dinâmico)</option>
                         <option value="6" selected>6 Palavras (Recomendado)</option>
                         <option value="8">8 Palavras (Padrão)</option>
@@ -60,29 +66,40 @@
                 </div>
             </section>
 
-            <!-- 4. AÇÃO -->
+            <!-- 4. BOTÃO GERAR -->
             <div class="action-container">
                 <button id="generateBtn" class="btn primary-lg">Gerar Legendas</button>
             </div>
 
-            <!-- RESULTADO -->
+            <!-- RESULTADO FINAL -->
             <section class="card hidden" id="resultSection">
-                <h2>Vídeo Final Legendado</h2>
+                <h2>Vídeo Final Renderizado</h2>
                 <video id="finalVideoPlayer" controls></video>
-                <a id="downloadBtn" class="btn primary-lg" download="video_legendado.mp4">Baixar Vídeo Final</a>
+                <a id="downloadBtn" class="btn primary-lg" download="video_legendado.mp4">Download do Vídeo Final</a>
             </section>
         </main>
     </div>
 
-    <!-- WIDGET DE PROGRESSO FLUTUANTE -->
-    <div id="progressWidget" class="progress-widget hidden">
-        <div class="progress-content">
-            <div class="spinner-circle"></div>
-            <div class="progress-details">
-                <span id="progressPercent">0%</span>
-                <p id="progressStatus">Processando...</p>
+    <!-- OVERLAY CENTRALIZADO QUE BLOQUEIA A PÁGINA COM TERMINAL DE LOGS -->
+    <div id="modalOverlay" class="modal-overlay hidden">
+        <div class="modal-card">
+            <div class="spinner-container">
+                <div class="spinner-circle"></div>
+                <div class="spinner-percent" id="modalPercent">0%</div>
             </div>
-            <button id="cancelBtn" class="btn danger-sm">Cancelar</button>
+
+            <h3 id="modalStatusTitle">Iniciando Servidor...</h3>
+            <p class="modal-subtitle">Aguarde. O sistema está processando seu vídeo no Render sem congelar.</p>
+
+            <!-- TERMINAL DE LOGS EM TEMPO REAL -->
+            <div class="terminal-box">
+                <div class="terminal-header">Logs do Servidor (Render STDOUT)</div>
+                <div class="terminal-content" id="terminalLogs">
+                    <div class="log-line">[SYSTEM] Conectado ao serviço de progresso realtime...</div>
+                </div>
+            </div>
+
+            <button id="cancelBtn" class="btn danger-md">Cancelar Processo</button>
         </div>
     </div>
 
