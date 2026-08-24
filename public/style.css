@@ -1,11 +1,12 @@
 :root {
-    --bg-color: #0f172a;
-    --card-bg: #1e293b;
+    --bg-color: #0b0f19;
+    --card-bg: #151c2c;
     --primary: #6366f1;
     --primary-hover: #4f46e5;
     --text-light: #f8fafc;
     --text-muted: #94a3b8;
     --danger: #ef4444;
+    --terminal-bg: #050811;
 }
 
 * {
@@ -21,6 +22,7 @@ body {
     display: flex;
     justify-content: center;
     padding: 20px;
+    min-height: 100vh;
 }
 
 .container {
@@ -30,7 +32,7 @@ body {
 
 header {
     text-align: center;
-    margin-bottom: 30px;
+    margin-bottom: 25px;
 }
 
 header h1 span {
@@ -42,6 +44,7 @@ header h1 span {
     border-radius: 12px;
     padding: 20px;
     margin-bottom: 20px;
+    border: 1px solid #1e293b;
 }
 
 .upload-box {
@@ -63,7 +66,7 @@ header h1 span {
 
 .btn.secondary { background: #334155; }
 .btn.primary-lg { width: 100%; padding: 15px; font-size: 1.1rem; }
-.btn.danger-sm { background: var(--danger); padding: 6px 12px; font-size: 0.85rem; }
+.btn.danger-md { background: var(--danger); padding: 10px 20px; width: 100%; margin-top: 15px; }
 
 .preview-container video, .preview-container img, #finalVideoPlayer {
     width: 100%;
@@ -73,26 +76,67 @@ header h1 span {
     margin-top: 15px;
 }
 
-.audio-info-card {
-    background: #0f172a;
-    padding: 15px;
+/* PLAYER DE ÁUDIO CORPORATIVO (SEM NOME DE ARQUIVO) */
+.audio-pro-player {
+    background: #090d16;
+    border: 1px solid #1e293b;
     border-radius: 8px;
-    margin-top: 10px;
+    padding: 15px;
+    margin-top: 15px;
 }
 
-.audio-details {
+.player-top {
     display: flex;
     justify-content: space-between;
-    margin-bottom: 8px;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.audio-badge {
+    background: rgba(99, 102, 241, 0.2);
+    color: var(--primary);
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: bold;
+}
+
+.audio-metrics {
+    font-size: 0.85rem;
     color: var(--text-muted);
+}
+
+.waveform-mock {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    height: 30px;
+    margin-bottom: 10px;
+}
+
+.waveform-mock .bar {
+    flex: 1;
+    height: 30%;
+    background: #1e293b;
+    border-radius: 2px;
+}
+
+.waveform-mock .bar.active {
+    height: 80%;
+    background: var(--primary);
+}
+
+audio {
+    width: 100%;
+    height: 40px;
 }
 
 /* GRID DOS 20 MODELOS DE LEGENDA */
 .styles-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-    gap: 15px;
-    max-height: 400px;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 12px;
+    max-height: 380px;
     overflow-y: auto;
     padding-right: 5px;
 }
@@ -100,69 +144,93 @@ header h1 span {
 .style-card {
     border: 2px solid #334155;
     border-radius: 8px;
-    padding: 12px;
-    background: #0f172a;
+    padding: 10px;
+    background: #090d16;
     cursor: pointer;
     transition: 0.2s;
 }
 
 .style-card:hover, .style-card.active {
     border-color: var(--primary);
-    box-shadow: 0 0 10px rgba(99, 102, 241, 0.3);
 }
 
 .style-preview-box {
-    background: #000;
     border-radius: 6px;
-    padding: 15px 10px;
+    padding: 12px 8px;
     text-align: center;
-    margin-bottom: 8px;
-    min-height: 70px;
+    margin-bottom: 6px;
+    min-height: 60px;
     display: flex;
     flex-direction: column;
     justify-content: center;
 }
 
 .options-group {
-    margin-top: 20px;
+    margin-top: 15px;
     display: flex;
     align-items: center;
     gap: 10px;
 }
 
 select {
-    background: #0f172a;
+    background: #090d16;
     color: white;
     border: 1px solid #334155;
     padding: 8px;
     border-radius: 6px;
 }
 
-/* PROGRESS WIDGET */
-.progress-widget {
+/* MODAL DE PROGRESSO BLOQUEANTE E CENTRALIZADO */
+.modal-overlay {
     position: fixed;
-    bottom: 20px;
-    right: 20px;
-    background: var(--card-bg);
-    border: 1px solid var(--primary);
-    padding: 15px 20px;
-    border-radius: 10px;
-    z-index: 1000;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(5, 8, 17, 0.85);
+    backdrop-filter: blur(5px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+    padding: 20px;
 }
 
-.progress-content {
+.modal-card {
+    background: var(--card-bg);
+    border: 1px solid var(--primary);
+    border-radius: 12px;
+    width: 100%;
+    max-width: 500px;
+    padding: 25px;
+    text-align: center;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.7);
+}
+
+.spinner-container {
+    position: relative;
+    width: 80px;
+    height: 80px;
+    margin: 0 auto 15px auto;
     display: flex;
     align-items: center;
-    gap: 15px;
+    justify-content: center;
 }
 
 .spinner-circle {
-    width: 25px;
-    height: 25px;
-    border: 3px solid #334155;
-    border-top: 3px solid var(--primary);
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    border: 4px solid #1e293b;
+    border-top: 4px solid var(--primary);
     border-radius: 50%;
     animation: spin 1s linear infinite;
+}
+
+.spinner-percent {
+    font-size: 1.1rem;
+    font-weight: bold;
+    color: var(--primary);
 }
 
 @keyframes spin {
@@ -170,4 +238,45 @@ select {
     100% { transform: rotate(360deg); }
 }
 
+.modal-subtitle {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin: 5px 0 15px 0;
+}
+
+/* TERMINAL DE LOGS DO SERVIDOR */
+.terminal-box {
+    background: var(--terminal-bg);
+    border: 1px solid #1e293b;
+    border-radius: 6px;
+    text-align: left;
+    overflow: hidden;
+}
+
+.terminal-header {
+    background: #0f172a;
+    padding: 6px 10px;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    border-bottom: 1px solid #1e293b;
+}
+
+.terminal-content {
+    padding: 10px;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 0.75rem;
+    height: 120px;
+    overflow-y: auto;
+    color: #10b981;
+}
+
+.terminal-content .log-error {
+    color: var(--danger);
+}
+
 .hidden { display: none !important; }
+
+@media (max-width: 600px) {
+    body { padding: 10px; }
+    .styles-grid { grid-template-columns: 1fr; }
+}
