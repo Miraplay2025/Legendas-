@@ -13,10 +13,8 @@ app.use(express.json());
 app.use(express.static('public'));
 app.use('/outputs', express.static(path.join(__dirname, 'outputs')));
 
-// Armazenamento de processos ativos para suporte ao cancelamento
 const activeProcesses = new Map();
 
-// Configuração do Multer para recebimento de uploads
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
         const dir = 'uploads/';
@@ -24,14 +22,11 @@ const storage = multer.diskStorage({
         cb(null, dir);
     },
     filename: (req, file, cb) => {
-        cb(null, Date.now() + '-' + file.originalname.replace(/\s+/g, '_'));
+        cb(null, Date.now() + '-' + Math.random().toString(36).substring(7) + path.extname(file.originalname));
     }
 });
 const upload = multer({ storage });
 
-/**
- * Definição dos 20 Modelos de Legenda no formato de estilos ASS
- */
 const CAPTION_MODELS = {
     'm1': { name: 'Bicolor 2 Linhas (Branco/Amarelo)', primary: '&H00FFFFFF', secondary: '&H0000FFFF', outline: '&H00000000', back: '&H80000000', borderStyle: 1, outlineW: 2, shadowW: 1 },
     'm2': { name: 'Bicolor 2 Linhas (Branco/Ciano)', primary: '&H00FFFFFF', secondary: '&H00FFFF00', outline: '&H00000000', back: '&H80000000', borderStyle: 1, outlineW: 2, shadowW: 1 },
@@ -67,7 +62,6 @@ function getAudioDuration(filePath) {
 function convertVttToAssStyle(vttPath, assPath, styleOptions) {
     const content = fs.readFileSync(vttPath, 'utf-8');
     const lines = content.split('\n');
-
     const config = CAPTION_MODELS[styleOptions.modelKey] || CAPTION_MODELS['m1'];
 
     let assHeader = `[Script Info]
@@ -109,12 +103,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     const startASS = currentCue.start.replace('.', ',');
                     const endASS = currentCue.end.replace('.', ',');
 
-                    if (line1Text) {
-                        events.push(`Dialogue: 0,${startASS},${endASS},Line1,,0,0,0,,${line1Text}`);
-                    }
-                    if (line2Text) {
-                        events.push(`Dialogue: 0,${startASS},${endASS},Line2,,0,0,0,,${line2Text}`);
-                    }
+                    if (line1Text) events.push(`Dialogue: 0,${startASS},${endASS},Line1,,0,0,0,,${line1Text}`);
+                    if (line2Text) events.push(`Dialogue: 0,${startASS},${endASS},Line2,,0,0,0,,${line2Text}`);
                 }
                 currentCue = null;
             }
@@ -127,9 +117,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 app.post('/api/process', upload.fields([{ name: 'media' }, { name: 'audio' }]), async (req, res) => {
     const processId = Date.now().toString();
 
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    const sendData = (payload) => {
+        res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    };
+
     try {
         if (!req.files || !req.files.media || !req.files.audio) {
-            return res.status(400).json({ error: 'Arquivos de mídia e áudio são obrigatórios.' });
+            sendData({ error: 'Erro: Selecione a mídia e o áudio obrigatórios.' });
+            return res.end();
         }
 
         const mediaFile = req.files.media[0];
@@ -141,17 +140,15 @@ app.post('/api/process', upload.fields([{ name: 'media' }, { name: 'audio' }]), 
 
         const outputVideoPath = path.join(outputDir, `final_${processId}.mp4`);
         const isImage = mediaFile.mimetype.startsWith('image/');
-        const audioDuration = await getAudioDuration(audioFile.path);
 
-        res.setHeader('Content-Type', 'text/event-stream');
-        res.setHeader('Cache-Control', 'no-cache');
-        res.setHeader('Connection', 'keep-alive');
+        sendData({ processId, percent: 5, status: 'Analizando duração do áudio...', log: '[INFO] Arquivos recebidos no servidor Render.' });
 
-        const sendProgress = (percent, message) => {
-            res.write(`data: ${JSON.stringify({ processId, percent, message })}\n\n`);
-        };
+        const audioDuration = await getAudioDuration(audioFile.path).catch(err => {
+            sendData({ error: `[ERRO FFPROBE] Falha ao obter duração: ${err.message}` });
+            throw err;
+        });
 
-        sendProgress(10, 'Iniciando transcrição com OpenAI Whisper...');
+        sendData({ percent: 15, status: 'Iniciando Whisper AI...', log: `[SYSTEM] Áudio verificado. Duração total: ${audioDuration.toFixed(2)}s.` });
 
         const vttOutputDir = path.join(__dirname, 'uploads');
         const whisperProc = spawn('whisper', [
@@ -163,27 +160,46 @@ app.post('/api/process', upload.fields([{ name: 'media' }, { name: 'audio' }]), 
 
         activeProcesses.set(processId, { whisperProc, ffmpegProc: null });
 
+        whisperProc.stderr.on('data', (data) => {
+            const msg = data.toString().trim();
+            if (msg) sendData({ percent: 35, status: 'Transcrevendo áudio...', log: `[WHISPER STDOUT] ${msg}` });
+        });
+
         whisperProc.stdout.on('data', (data) => {
-            sendProgress(35, `Transcrevendo: ${data.toString().substring(0, 30)}...`);
+            const msg = data.toString().trim();
+            if (msg) sendData({ percent: 45, status: 'Processando texto...', log: `[WHISPER LOG] ${msg}` });
+        });
+
+        whisperProc.on('error', (err) => {
+            sendData({ error: `[ERRO WHISPER EXEC] ${err.message}` });
+            activeProcesses.delete(processId);
+            res.end();
         });
 
         whisperProc.on('close', async (code) => {
             if (code !== 0) {
-                sendProgress(-1, 'Erro durante a transcrição.');
+                sendData({ error: `[ERRO WHISPER] Processo finalizado com código de falha ${code}.` });
+                activeProcesses.delete(processId);
                 return res.end();
             }
 
-            sendProgress(65, 'Transcrição concluída. Aplicando modelo selecionado...');
+            sendData({ percent: 70, status: 'Gerando arquivo de legendas...', log: '[INFO] Transcrição concluída. Aplicando estilo de 2 linhas...' });
 
             const generatedVttPath = path.join(vttOutputDir, `${path.basename(audioFile.path)}.vtt`);
             const assPath = path.join(vttOutputDir, `${processId}.ass`);
 
-            convertVttToAssStyle(generatedVttPath, assPath, {
-                modelKey: styleModel,
-                wordsPerBatch: parseInt(wordsPerBatch) || 6
-            });
+            try {
+                convertVttToAssStyle(generatedVttPath, assPath, {
+                    modelKey: styleModel,
+                    wordsPerBatch: parseInt(wordsPerBatch) || 6
+                });
+            } catch (styleErr) {
+                sendData({ error: `[ERRO ASS FORMATTER] ${styleErr.message}` });
+                activeProcesses.delete(processId);
+                return res.end();
+            }
 
-            sendProgress(80, 'Compilando vídeo e renderizando legendas com FFmpeg...');
+            sendData({ percent: 80, status: 'Renderizando vídeo via FFmpeg...', log: '[FFMPEG] Gravando legendas dinâmicas no vídeo final...' });
 
             let ffmpegArgs = [];
             if (isImage) {
@@ -216,22 +232,35 @@ app.post('/api/process', upload.fields([{ name: 'media' }, { name: 'audio' }]), 
             }
 
             const ffmpegProc = spawn('ffmpeg', ffmpegArgs);
-            activeProcesses.get(processId).ffmpegProc = ffmpegProc;
+            const processRef = activeProcesses.get(processId);
+            if (processRef) processRef.ffmpegProc = ffmpegProc;
+
+            ffmpegProc.stderr.on('data', (data) => {
+                const logMsg = data.toString().trim();
+                if (logMsg.includes('time=')) {
+                    sendData({ percent: 90, status: 'Compilando arquivo final...', log: `[FFMPEG PROGRESS] ${logMsg.substring(0, 80)}` });
+                }
+            });
+
+            ffmpegProc.on('error', (err) => {
+                sendData({ error: `[ERRO FFMPEG EXEC] ${err.message}` });
+                activeProcesses.delete(processId);
+                res.end();
+            });
 
             ffmpegProc.on('close', (ffmpegCode) => {
                 activeProcesses.delete(processId);
                 if (ffmpegCode === 0) {
-                    sendProgress(100, 'Vídeo finalizado com sucesso!');
-                    res.write(`data: ${JSON.stringify({ complete: true, resultUrl: `/outputs/final_${processId}.mp4` })}\n\n`);
+                    sendData({ percent: 100, complete: true, resultUrl: `/outputs/final_${processId}.mp4`, log: '[SUCESSO] Vídeo gerado com sucesso!' });
                 } else {
-                    sendProgress(-1, 'Erro durante a renderização no FFmpeg.');
+                    sendData({ error: `[ERRO FFMPEG] Falha na renderização. Código final: ${ffmpegCode}` });
                 }
                 res.end();
             });
         });
 
     } catch (err) {
-        res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+        sendData({ error: `[ERRO INTERNO] ${err.message}` });
         res.end();
     }
 });
@@ -243,7 +272,7 @@ app.post('/api/cancel', (req, res) => {
         if (procGroup.whisperProc) procGroup.whisperProc.kill('SIGKILL');
         if (procGroup.ffmpegProc) procGroup.ffmpegProc.kill('SIGKILL');
         activeProcesses.delete(processId);
-        return res.json({ success: true, message: 'Processo cancelado.' });
+        return res.json({ success: true, message: 'Processo cancelado no servidor.' });
     }
     res.status(404).json({ error: 'Processo não encontrado.' });
 });
