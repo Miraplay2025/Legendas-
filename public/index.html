@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AutoCaption Pro - 20 Modelos de Legenda</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>AutoCaption <span>Pro</span></h1>
+            <p>Sistema Profissional de Legendas Automáticas</p>
+        </header>
+
+        <main>
+            <!-- 1. MÍDIA -->
+            <section class="card media-section">
+                <h2>1. Mídia de Fundo (Vídeo ou Imagem)</h2>
+                <div class="upload-box" id="mediaUploadBox">
+                    <input type="file" id="mediaInput" accept="video/*,image/*" hidden>
+                    <button class="btn" onclick="document.getElementById('mediaInput').click()">Selecionar Vídeo/Imagem</button>
+                    <p class="file-hint">Mantém a proporção original do arquivo</p>
+                </div>
+                <div class="preview-container hidden" id="mediaPreviewContainer">
+                    <video id="videoPreview" controls class="hidden"></video>
+                    <img id="imagePreview" class="hidden" alt="Preview da Imagem">
+                </div>
+            </section>
+
+            <!-- 2. ÁUDIO -->
+            <section class="card audio-section">
+                <h2>2. Áudio de Origem</h2>
+                <div class="upload-box" id="audioUploadBox">
+                    <input type="file" id="audioInput" accept="audio/*" hidden>
+                    <button class="btn secondary" onclick="document.getElementById('audioInput').click()">Selecionar Áudio</button>
+                </div>
+                <div class="audio-info-card hidden" id="audioInfoCard">
+                    <div class="audio-details">
+                        <span id="audioName">arquivo.mp3</span>
+                        <span id="audioMeta">00:00 | 0 MB</span>
+                    </div>
+                    <audio id="audioPlayer" controls></audio>
+                </div>
+            </section>
+
+            <!-- 3. MODELOS DE LEGENDAS (20 OPÇÕES) -->
+            <section class="card styles-section">
+                <h2>3. Selecione um dos 20 Modelos de Legenda</h2>
+                <div class="styles-grid" id="stylesGrid"></div>
+
+                <div class="options-group">
+                    <label for="wordsPerBatch">Palavras exibidas por vez:</label>
+                    <select id="wordsPerBatch">
+                        <option value="2">2 Palavras (Ultra Rápido)</option>
+                        <option value="4">4 Palavras (Dinâmico)</option>
+                        <option value="6" selected>6 Palavras (Recomendado)</option>
+                        <option value="8">8 Palavras (Padrão)</option>
+                    </select>
+                </div>
+            </section>
+
+            <!-- 4. AÇÃO -->
+            <div class="action-container">
+                <button id="generateBtn" class="btn primary-lg">Gerar Legendas</button>
+            </div>
+
+            <!-- RESULTADO -->
+            <section class="card hidden" id="resultSection">
+                <h2>Vídeo Final Legendado</h2>
+                <video id="finalVideoPlayer" controls></video>
+                <a id="downloadBtn" class="btn primary-lg" download="video_legendado.mp4">Baixar Vídeo Final</a>
+            </section>
+        </main>
+    </div>
+
+    <!-- WIDGET DE PROGRESSO FLUTUANTE -->
+    <div id="progressWidget" class="progress-widget hidden">
+        <div class="progress-content">
+            <div class="spinner-circle"></div>
+            <div class="progress-details">
+                <span id="progressPercent">0%</span>
+                <p id="progressStatus">Processando...</p>
+            </div>
+            <button id="cancelBtn" class="btn danger-sm">Cancelar</button>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
