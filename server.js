@@ -6,15 +6,20 @@ const fs = require('fs');
 const cors = require('cors');
 
 const app = express();
+// Porta configurada para o Render (process.env.PORT) ou 3000 localmente
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
+// Serve arquivos estáticos da pasta public (frontend)
 app.use(express.static('public'));
+// Serve os vídeos gerados na pasta outputs
 app.use('/outputs', express.static(path.join(__dirname, 'outputs')));
 
+// Armazena processos ativos para permitir cancelamento
 const activeProcesses = new Map();
 
+// Configuração do Multer: Armazenamento temporário com nomes únicos
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
         const dir = 'uploads/';
@@ -22,11 +27,14 @@ const storage = multer.diskStorage({
         cb(null, dir);
     },
     filename: (req, file, cb) => {
-        cb(null, Date.now() + '-' + Math.random().toString(36).substring(7) + path.extname(file.originalname));
+        // Gera nome único para evitar conflitos de cache e sobrescrita
+        const uniqueSuffix = Date.now() + '-' + Math.random().toString(36).substring(7);
+        cb(null, uniqueSuffix + path.extname(file.originalname));
     }
 });
 const upload = multer({ storage });
 
+// Definição técnica dos 20 modelos de legenda (Formato ASS)
 const CAPTION_MODELS = {
     'm1': { name: 'Bicolor 2 Linhas (Branco/Amarelo)', primary: '&H00FFFFFF', secondary: '&H0000FFFF', outline: '&H00000000', back: '&H80000000', borderStyle: 1, outlineW: 2, shadowW: 1 },
     'm2': { name: 'Bicolor 2 Linhas (Branco/Ciano)', primary: '&H00FFFFFF', secondary: '&H00FFFF00', outline: '&H00000000', back: '&H80000000', borderStyle: 1, outlineW: 2, shadowW: 1 },
@@ -50,6 +58,7 @@ const CAPTION_MODELS = {
     'm20': { name: 'Estilo High Contrast P&B', primary: '&H00FFFFFF', secondary: '&H00000000', outline: '&H00000000', back: '&H00FFFFFF', borderStyle: 3, outlineW: 3, shadowW: 0 }
 };
 
+// Obtém duração do áudio via FFprobe (essencial para imagens estáticas)
 function getAudioDuration(filePath) {
     return new Promise((resolve, reject) => {
         exec(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${filePath}"`, (err, stdout) => {
@@ -59,11 +68,14 @@ function getAudioDuration(filePath) {
     });
 }
 
+// Converte VTT (Whisper) para ASS estilizado (2 linhas, cores, quebra de palavras)
 function convertVttToAssStyle(vttPath, assPath, styleOptions) {
+    if (!fs.existsSync(vttPath)) throw new Error(`Arquivo VTT não encontrado: ${vttPath}`);
     const content = fs.readFileSync(vttPath, 'utf-8');
     const lines = content.split('\n');
     const config = CAPTION_MODELS[styleOptions.modelKey] || CAPTION_MODELS['m1'];
 
+    // Cabeçalho ASS com definição dos dois estilos de linha
     let assHeader = `[Script Info]
 Title: Auto Captions Modern 20 Models
 ScriptType: v4.00+
@@ -83,6 +95,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     let events = [];
     let currentCue = null;
 
+    // Parser simples de VTT para extrair tempos e texto
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim();
         if (line.includes('-->')) {
@@ -90,19 +103,24 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             currentCue = { start: times[0], end: times[1], text: '' };
         } else if (currentCue && line !== '' && !line.startsWith('WEBVTT')) {
             currentCue.text += (currentCue.text ? ' ' : '') + line;
+            // Se a próxima linha for vazia ou fim do arquivo, processa o cue
             if (i === lines.length - 1 || lines[i + 1].trim() === '') {
                 const words = currentCue.text.split(' ');
                 const maxWords = styleOptions.wordsPerBatch || 6;
                 
+                // Divide o texto em lotes de palavras para exibição dinâmica
                 for (let w = 0; w < words.length; w += maxWords) {
                     const batchWords = words.slice(w, w + maxWords);
                     const mid = Math.ceil(batchWords.length / 2);
+                    // Divide o lote em duas linhas
                     const line1Text = batchWords.slice(0, mid).join(' ');
                     const line2Text = batchWords.slice(mid).join(' ');
 
+                    // Formata tempo VTT (00:00:00.000) para ASS (0:00:00.00)
                     const startASS = currentCue.start.replace('.', ',');
                     const endASS = currentCue.end.replace('.', ',');
 
+                    // Adiciona diálogos para as duas linhas com estilos diferentes
                     if (line1Text) events.push(`Dialogue: 0,${startASS},${endASS},Line1,,0,0,0,,${line1Text}`);
                     if (line2Text) events.push(`Dialogue: 0,${startASS},${endASS},Line2,,0,0,0,,${line2Text}`);
                 }
@@ -114,20 +132,52 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     fs.writeFileSync(assPath, assHeader + events.join('\n'));
 }
 
+/**
+ * Função CRÍTICA: Lê stream de dados (stdout/stderr) caractere por caractere
+ * e quebra a linha tanto em '\n' quanto em '\r' (usado para barras de progresso).
+ * Isso impede o congelamento do Whisper e FFmpeg.
+ */
+function listenToStreamProcess(stream, onLine) {
+    let buffer = Buffer.alloc(0);
+    stream.on('data', (chunk) => {
+        buffer = Buffer.concat([buffer, chunk]);
+        let boundary = 0;
+        
+        // Procura por \n (newline) ou \r (carriage return)
+        for (let i = 0; i < buffer.length; i++) {
+            if (buffer[i] === 10 || buffer[i] === 13) { // '\n' is 10, '\r' is 13
+                const line = buffer.slice(boundary, i).toString('utf8').trim();
+                if (line) onLine(line);
+                boundary = i + 1;
+            }
+        }
+        // Mantém o restante no buffer
+        buffer = buffer.slice(boundary);
+    });
+}
+
+// ROTA PRINCIPAL: Processamento de Mídia e Áudio (SSE)
 app.post('/api/process', upload.fields([{ name: 'media' }, { name: 'audio' }]), async (req, res) => {
     const processId = Date.now().toString();
 
+    // Configura cabeçalhos para Server-Sent Events (SSE) - Realtime total
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
     const sendData = (payload) => {
-        res.write(`data: ${JSON.stringify(payload)}\n\n`);
+        if (!res.writableEnded) {
+            res.write(`data: ${JSON.stringify(payload)}\n\n`);
+        }
     };
+
+    // Log real no console do Render
+    console.log(`[RENDER LOG] [START] Iniciando Processo ID: ${processId}`);
 
     try {
         if (!req.files || !req.files.media || !req.files.audio) {
-            sendData({ error: 'Erro: Selecione a mídia e o áudio obrigatórios.' });
+            console.error(`[RENDER LOG] [ERROR] Arquivos faltantes para ID: ${processId}`);
+            sendData({ error: 'Erro crítico: Arquivos de mídia e áudio são obrigatórios.' });
             return res.end();
         }
 
@@ -141,89 +191,111 @@ app.post('/api/process', upload.fields([{ name: 'media' }, { name: 'audio' }]), 
         const outputVideoPath = path.join(outputDir, `final_${processId}.mp4`);
         const isImage = mediaFile.mimetype.startsWith('image/');
 
-        sendData({ processId, percent: 5, status: 'Analizando duração do áudio...', log: '[INFO] Arquivos recebidos no servidor Render.' });
+        sendData({ processId, percent: 5, status: 'Analizando arquivos recebidos...', log: `[SYSTEM] Arquivos aceitos. ID: ${processId}` });
 
-        const audioDuration = await getAudioDuration(audioFile.path).catch(err => {
-            sendData({ error: `[ERRO FFPROBE] Falha ao obter duração: ${err.message}` });
+        // Obtém duração (necessário para FFmpeg e progresso real)
+        let audioDuration = 0;
+        try {
+            audioDuration = await getAudioDuration(audioFile.path);
+            console.log(`[RENDER LOG] [INFO] Duração Áudio: ${audioDuration}s para ID: ${processId}`);
+        } catch (err) {
+            console.error(`[RENDER LOG] [ERROR FFPROBE] ${err.message}`);
+            sendData({ error: `Erro FFprobe (Metadados): ${err.message}`, log: `[ERROR] FFprobe falhou.` });
             throw err;
-        });
+        }
 
-        sendData({ percent: 15, status: 'Iniciando Whisper AI...', log: `[SYSTEM] Áudio verificado. Duração total: ${audioDuration.toFixed(2)}s.` });
+        sendData({ percent: 15, status: 'Iniciando Transcrição Whisper AI...', log: `[SYSTEM] Áudio verificado (${audioDuration.toFixed(1)}s). Carregando modelo Whisper...` });
 
         const vttOutputDir = path.join(__dirname, 'uploads');
+        // Spawn do Whisper CLI (tiny model para velocidade no Render free)
         const whisperProc = spawn('whisper', [
             audioFile.path,
             '--model', 'tiny',
             '--output_format', 'vtt',
-            '--output_dir', vttOutputDir
+            '--output_dir', vttOutputDir,
+            '--verbose', 'False' // Evita spam excessivo de logs padrão
         ]);
 
-        activeProcesses.set(processId, { whisperProc, ffmpegProc: null });
+        // Registra o processo para cancelamento
+        activeProcesses.set(processId, { whisperProc, ffmpegProc: null, audioDuration });
 
-        whisperProc.stderr.on('data', (data) => {
-            const msg = data.toString().trim();
-            if (msg) sendData({ percent: 35, status: 'Transcrevendo áudio...', log: `[WHISPER STDOUT] ${msg}` });
+        // Captura stderr (onde o Whisper joga o progresso real e logs)
+        listenToStreamProcess(whisperProc.stderr, (log) => {
+            console.log(`[RENDER LOG] [WHISPER STDERR] ${log}`);
+            // Envia logs reais para o frontend
+            sendData({ percent: 30, status: 'Whisper: Transcrevendo...', log: `[WHISPER] ${log}` });
         });
 
-        whisperProc.stdout.on('data', (data) => {
-            const msg = data.toString().trim();
-            if (msg) sendData({ percent: 45, status: 'Processando texto...', log: `[WHISPER LOG] ${msg}` });
+        // Captura stdout (logs gerais)
+        listenToStreamProcess(whisperProc.stdout, (log) => {
+            console.log(`[RENDER LOG] [WHISPER STDOUT] ${log}`);
+            sendData({ percent: 40, status: 'Whisper: Processando...', log: `[WHISPER INFO] ${log}` });
         });
 
         whisperProc.on('error', (err) => {
-            sendData({ error: `[ERRO WHISPER EXEC] ${err.message}` });
-            activeProcesses.delete(processId);
-            res.end();
+            console.error(`[RENDER LOG] [ERROR WHISPER SPAWN] ${err.message}`);
+            sendData({ error: `Erro na execução do Whisper: ${err.message}` });
         });
 
+        // Callback de finalização do Whisper
         whisperProc.on('close', async (code) => {
             if (code !== 0) {
-                sendData({ error: `[ERRO WHISPER] Processo finalizado com código de falha ${code}.` });
+                console.error(`[RENDER LOG] [ERROR WHISPER] Código de saída: ${code}`);
+                sendData({ error: `Whisper falhou (Código ${code}). Verifique logs do servidor.` });
                 activeProcesses.delete(processId);
                 return res.end();
             }
 
-            sendData({ percent: 70, status: 'Gerando arquivo de legendas...', log: '[INFO] Transcrição concluída. Aplicando estilo de 2 linhas...' });
+            console.log(`[RENDER LOG] [SUCCESS WHISPER] Transcrição concluída para ID: ${processId}`);
+            sendData({ percent: 70, status: 'Transcrição concluída. Formatando legendas...', log: '[SYSTEM] Arquivo VTT gerado. Aplicando estilo ASS bicolor...' });
 
             const generatedVttPath = path.join(vttOutputDir, `${path.basename(audioFile.path)}.vtt`);
             const assPath = path.join(vttOutputDir, `${processId}.ass`);
 
             try {
+                // Converte VTT para ASS com os 20 modelos
                 convertVttToAssStyle(generatedVttPath, assPath, {
                     modelKey: styleModel,
                     wordsPerBatch: parseInt(wordsPerBatch) || 6
                 });
             } catch (styleErr) {
-                sendData({ error: `[ERRO ASS FORMATTER] ${styleErr.message}` });
+                console.error(`[RENDER LOG] [ERROR ASS] ${styleErr.message}`);
+                sendData({ error: `Erro na formatação das legendas: ${styleErr.message}` });
                 activeProcesses.delete(processId);
                 return res.end();
             }
 
-            sendData({ percent: 80, status: 'Renderizando vídeo via FFmpeg...', log: '[FFMPEG] Gravando legendas dinâmicas no vídeo final...' });
+            sendData({ percent: 80, status: 'Iniciando Renderização FFmpeg (Queima de Legendas)...', log: '[FFMPEG] Mesclando mídia, áudio e aplicando legendas hardcode...' });
+            console.log(`[RENDER LOG] [START FFMPEG] Iniciando render para ID: ${processId}`);
 
+            // Montagem do comando FFmpeg baseado no tipo de mídia (imagem vs vídeo)
             let ffmpegArgs = [];
             if (isImage) {
+                // Modo Imagem Estática + Áudio
                 ffmpegArgs = [
-                    '-loop', '1',
+                    '-loop', '1', // Loop da imagem
                     '-i', mediaFile.path,
                     '-i', audioFile.path,
-                    '-vf', `subtitles=${assPath}`,
-                    '-c:v', 'libx264',
-                    '-tune', 'stillimage',
-                    '-c:a', 'aac',
+                    '-vf', `subtitles=${assPath}`, // Queima as legendas ASS
+                    '-c:v', 'libx264', // Codec vídeo padrão
+                    '-tune', 'stillimage', // Otimização para imagem estática
+                    '-c:a', 'aac', // Codec áudio
                     '-b:a', '192k',
-                    '-pix_fmt', 'yuv420p',
-                    '-t', audioDuration.toString(),
-                    '-y',
+                    '-pix_fmt', 'yuv420p', // Compatibilidade universal
+                    '-t', audioDuration.toString(), // Limita duração ao áudio
+                    '-shortest', // Garante parada no arquivo mais curto (segurança)
+                    '-y', // Sobrescreve output
                     outputVideoPath
                 ];
             } else {
+                // Modo Vídeo + Áudio (Concatenação e Mixagem)
                 ffmpegArgs = [
                     '-i', mediaFile.path,
                     '-i', audioFile.path,
+                    // Filtro complexo: mescla vídeo(0:v) e áudio(1:a), depois aplica legendas no vídeo mesclado
                     '-filter_complex', `[0:v][1:a]concat=n=1:v=1:a=1[v][a];[v]subtitles=${assPath}[outv]`,
-                    '-map', '[outv]',
-                    '-map', '[a]',
+                    '-map', '[outv]', // Mapeia vídeo legendado
+                    '-map', '[a]',    // Mapeia áudio mixado
                     '-c:v', 'libx264',
                     '-c:a', 'aac',
                     '-y',
@@ -232,51 +304,92 @@ app.post('/api/process', upload.fields([{ name: 'media' }, { name: 'audio' }]), 
             }
 
             const ffmpegProc = spawn('ffmpeg', ffmpegArgs);
-            const processRef = activeProcesses.get(processId);
-            if (processRef) processRef.ffmpegProc = ffmpegProc;
+            // Atualiza referência do processo ativo para o FFmpeg
+            const currentProc = activeProcesses.get(processId);
+            if (currentProc) currentProc.ffmpegProc = ffmpegProc;
 
-            ffmpegProc.stderr.on('data', (data) => {
-                const logMsg = data.toString().trim();
-                if (logMsg.includes('time=')) {
-                    sendData({ percent: 90, status: 'Compilando arquivo final...', log: `[FFMPEG PROGRESS] ${logMsg.substring(0, 80)}` });
+            // Escuta stderr do FFmpeg (onde ficam os logs de progresso 'time=...')
+            listenToStreamProcess(ffmpegProc.stderr, (log) => {
+                console.log(`[RENDER LOG] [FFMPEG STDERR] ${log}`);
+                
+                // Parser de progresso real do FFmpeg
+                if (log.includes('time=')) {
+                    // Extrai '00:00:00.00' do log '... time=00:00:10.50 ...'
+                    const timeMatch = log.match(/time=(\d{2}:\d{2}:\d{2}.\d{2})/);
+                    if (timeMatch && audioDuration > 0) {
+                        const rawTime = timeMatch[1];
+                        const parts = rawTime.split(':');
+                        // Converte HH:MM:SS.ms para segundos totais
+                        const seconds = (+parts[0]) * 3600 + (+parts[1]) * 60 + (+parts[2].replace(',', '.'));
+                        // Calcula porcentagem real da fase FFmpeg (mapeada de 80% a 99%)
+                        const ffmpegPercent = Math.min(99, 80 + (seconds / audioDuration) * 19);
+                        sendData({ percent: Math.round(ffmpegPercent), status: 'FFmpeg: Renderizando vídeo final...', log: `[FFMPEG] Processando tempo: ${rawTime}` });
+                    }
+                } else {
+                    // Logs gerais do FFmpeg
+                    sendData({ percent: 85, status: 'FFmpeg: Preparando render...', log: `[FFMPEG INFO] ${log.substring(0, 100)}` });
                 }
             });
 
             ffmpegProc.on('error', (err) => {
-                sendData({ error: `[ERRO FFMPEG EXEC] ${err.message}` });
-                activeProcesses.delete(processId);
-                res.end();
+                console.error(`[RENDER LOG] [ERROR FFMPEG SPAWN] ${err.message}`);
+                sendData({ error: `Erro na execução do FFmpeg: ${err.message}` });
             });
 
+            // Callback finalização FFmpeg
             ffmpegProc.on('close', (ffmpegCode) => {
+                console.log(`[RENDER LOG] [FINISH FFMPEG] Código saída: ${ffmpegCode} para ID: ${processId}`);
                 activeProcesses.delete(processId);
+
                 if (ffmpegCode === 0) {
-                    sendData({ percent: 100, complete: true, resultUrl: `/outputs/final_${processId}.mp4`, log: '[SUCESSO] Vídeo gerado com sucesso!' });
+                    // SUCESSO ABSOLUTO
+                    sendData({ percent: 100, complete: true, resultUrl: `/outputs/final_${processId}.mp4`, log: '[SUCESSO] Processo concluído reais! Vídeo pronto para download.' });
+                    console.log(`[RENDER LOG] [COMPLETE SUCESSO] ID: ${processId}. Arquivo: final_${processId}.mp4`);
                 } else {
-                    sendData({ error: `[ERRO FFMPEG] Falha na renderização. Código final: ${ffmpegCode}` });
+                    // FALHA NO FFMPEG
+                    sendData({ error: `FFmpeg falhou na renderização final (Código ${ffmpegCode}). Verifique logs do servidor.`, log: '[ERROR] FFmpeg falhou na compilação.' });
                 }
-                res.end();
+                res.end(); // Encerra stream SSE
             });
         });
 
     } catch (err) {
-        sendData({ error: `[ERRO INTERNO] ${err.message}` });
+        // Erro genérico capturado
+        console.error(`[RENDER LOG] [CRITICAL ERROR CATCH] ${err.message}`);
+        sendData({ error: `Erro interno crítico: ${err.message}`, log: '[ERROR] Falha crítica no catch.' });
+        activeProcesses.delete(processId);
         res.end();
     }
 });
 
+// ROTA DE CANCELAMENTO (POST)
 app.post('/api/cancel', (req, res) => {
     const { processId } = req.body;
+    console.log(`[RENDER LOG] [CANCEL REQUEST] Recebido para ID: ${processId}`);
+    
     if (activeProcesses.has(processId)) {
         const procGroup = activeProcesses.get(processId);
-        if (procGroup.whisperProc) procGroup.whisperProc.kill('SIGKILL');
-        if (procGroup.ffmpegProc) procGroup.ffmpegProc.kill('SIGKILL');
+        
+        // Mata processos usando SIGKILL para garantir parada imediata no Linux/Render
+        if (procGroup.whisperProc) {
+            console.log(`[RENDER LOG] [KILL] Matando Whisper para ID: ${processId}`);
+            procGroup.whisperProc.kill('SIGKILL');
+        }
+        if (procGroup.ffmpegProc) {
+            console.log(`[RENDER LOG] [KILL] Matando FFmpeg para ID: ${processId}`);
+            procGroup.ffmpegProc.kill('SIGKILL');
+        }
+        
         activeProcesses.delete(processId);
-        return res.json({ success: true, message: 'Processo cancelado no servidor.' });
+        return res.json({ success: true, message: 'Processamento cancelado reais no servidor.' });
     }
-    res.status(404).json({ error: 'Processo não encontrado.' });
+    
+    console.warn(`[RENDER LOG] [CANCEL WARN] Processo ${processId} não encontrado para cancelamento.`);
+    res.status(404).json({ error: 'Processo não encontrado ou já finalizado.' });
 });
 
+// Inicia o servidor
 app.listen(PORT, () => {
-    console.log(`Servidor rodando na porta ${PORT}`);
+    console.log(`[RENDER LOG] [SYSTEM START] Servidor Profissional rodando reais na porta ${PORT}`);
+    console.log(`[RENDER LOG] [INFO] Modo Docker/Render detectado. Caminhos temporários configurados.`);
 });
